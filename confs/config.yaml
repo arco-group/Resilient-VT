@@ -1,0 +1,7 @@
+device: cuda # cuda # cpu # mps
+python_version: ${python_version:micro}
+
+defaults:
+  - _self_
+  - experiment: MIMIC_multimodal_model_selection # MIMIC_unimodal_img_w_tr # classification #MIMIC_multimodal # multimodal_joint_fusion_classification_with_missing_generation
+  - experiment/paths/system@: local 

@@ -1,0 +1,2 @@
+init_params:
+  freeze_model_params: True

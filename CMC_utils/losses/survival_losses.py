@@ -1,0 +1,185 @@
+import torch
+from typing import Union
+from omegaconf import ListConfig
+from CMC_utils.miscellaneous import do_nothing
+
+
+__all__ = ["SurvivalLogLikelihoodLoss", "SurvivalRankingLoss"]
+
+
+class SurvivalLogLikelihoodLoss(torch.nn.Module):
+    """
+    Loss function for survival analysis based on the log-likelihood of the survival function.
+    """
+    def __init__(self, num_events: int, max_time: int, eps: float = 1e-08):
+        super(SurvivalLogLikelihoodLoss, self).__init__()
+        self.num_events = num_events
+        self.max_time = max_time
+        self.eps = eps
+
+    def get_uncensored_mask(self, labels):
+        """
+        Get the mask for the uncensored samples.
+        Parameters
+        ----------
+        labels : torch.Tensor
+
+        Returns
+        -------
+        mask : torch.Tensor
+            Mask for the uncensored samples.
+        """
+        batch_dim = labels.shape[0]
+        mask = torch.zeros((batch_dim, self.num_events, self.max_time)).to(labels.device)
+
+        mask[torch.arange(batch_dim), torch.clamp(labels[:, 0, 0] - 1, min=0).long(), labels[:, 0, 1].long()] = 1
+        mask[labels[:, 0, 0] == 0, 0, : ] = 0
+
+        return mask
+
+    def get_censored_mask(self, labels):
+        """
+        Get the mask for the censored samples.
+        Parameters
+        ----------
+        labels : torch.Tensor
+
+        Returns
+        -------
+        mask : torch.Tensor
+            Mask for the censored samples.
+        """
+        batch_dim = labels.shape[0]
+
+        mask = torch.zeros((batch_dim, self.max_time)).to(labels.device)
+
+        mask[torch.arange(batch_dim), labels[:, 0, 1].long()] = 1
+
+        mask[labels[:, 0, 0] != 0, :] = 0
+
+        return mask
+
+    def forward(self, outputs, labels ):
+        """
+        Compute the loss.
+        Parameters
+        ----------
+        outputs : torch.Tensor
+        labels : torch.Tensor
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Loss value.
+        """
+        dim_options = {2: torch.unsqueeze, 3: do_nothing}
+        labels = dim_options[len(labels.shape)](labels, dim=1)
+
+        uncensored_mask = self.get_uncensored_mask(labels).to(outputs.device)
+        censored_mask = self.get_censored_mask(labels).to(outputs.device)
+
+        CIF = torch.cumsum(outputs, dim=-1)
+        censored_values = 1 - torch.sum(CIF, dim=1, keepdim=True)
+
+        uncensored_map = torch.sign(labels[:, :, 0])
+
+        tmp1 = torch.nansum(torch.sum(uncensored_mask * outputs, dim=2), dim=1, keepdim=True)
+        tmp1 = torch.mul( torch.log(tmp1 + self.eps), uncensored_map )
+
+        tmp2 = torch.nansum(censored_mask * censored_values, dim=1, keepdim=True)
+        tmp2 = torch.mul( torch.log(tmp2 + self.eps), (1. - uncensored_map) )
+
+        L1 = tmp1 + tmp2
+        loss = - torch.nansum(L1)
+        return loss
+
+
+class SurvivalRankingLoss(torch.nn.Module):
+    """
+    Loss function for survival analysis based on the ranking loss.
+    """
+    def __init__(self, num_events: int, max_time: int, sigma: float, alpha: Union[float, list, ListConfig] = 1.0):
+        super(SurvivalRankingLoss, self).__init__()
+        self.num_events = num_events
+        self.max_time = max_time
+        self.sigma = sigma
+        if isinstance(alpha, float):
+            alpha = [alpha] * self.num_events
+        self.alpha = torch.Tensor(alpha)
+
+    def get_mask(self, labels):
+        """
+        Get the mask for the samples.
+        Parameters
+        ----------
+        labels : torch.Tensor
+
+        Returns
+        -------
+        mask : torch.Tensor
+            Mask for the samples.
+        """
+        batch_dim = labels.shape[0]
+
+        tmp1 = torch.repeat_interleave(labels[:, :, 1], batch_dim, dim=1)
+        tmp1 = tmp1 < tmp1.transpose(1, 0)
+
+        tmp2 = torch.repeat_interleave(labels[:, :, 0], batch_dim, dim=1)
+        tmp2 = tmp2 != 0
+        # tmp2 = tmp2 == tmp2.transpose(1, 0)
+        # tmp2[labels[:, 0, 0] == 0, :] = 0
+
+        mask = torch.reshape(torch.unsqueeze(tmp1*tmp2, dim=2), (1, batch_dim, batch_dim))
+        return mask
+
+    def forward(self, outputs, labels ):
+        """
+        Compute the loss.
+        Parameters
+        ----------
+        outputs : torch.Tensor
+        labels : torch.Tensor
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Loss value.
+        """
+        dim_options = {2: torch.unsqueeze, 3: do_nothing}
+        labels = dim_options[len(labels.shape)](labels, dim=1)
+
+        batch_dim = labels.shape[0]
+
+        CIF = torch.cumsum(outputs, dim=-1).unsqueeze(1)
+
+        sample_idx = torch.unsqueeze(torch.arange(batch_dim), dim=1).to(outputs.device)
+        k_event_idx = torch.clamp(labels[:, :, 0] - 1, min=0).long()
+        k_time_idx = labels[:, :, 1].long()
+
+        tmp1_idx = torch.cat( [sample_idx, k_event_idx, k_time_idx], dim=1 )
+        tmp1 = CIF[tmp1_idx.chunk(chunks=3, dim=1)]
+        tmp1 = torch.repeat_interleave(torch.unsqueeze(tmp1, dim=2), batch_dim, dim=2)
+        tmp1 = torch.transpose(tmp1, 1, 0)
+
+        CIF_ref = torch.transpose(CIF, 2, 0)
+        tmp2_idx = torch.cat([k_time_idx, k_event_idx], dim=1)
+        tmp2 = CIF_ref[tmp2_idx.chunk(chunks=2, dim=1)]
+        tmp2 = torch.transpose(tmp2, 1, 0)
+
+        tmp_num = tmp1 - tmp2
+
+        tmp = torch.exp(- tmp_num/self.sigma )
+        mask = self.get_mask(labels).to(outputs.device)
+
+        L2 = torch.nansum(mask*tmp, dim=2).squeeze()
+        alpha = self.alpha.to(outputs.device)
+        alpha = alpha[k_event_idx].squeeze()
+
+        L2 = L2*alpha
+        loss = torch.nansum(L2)
+
+        return loss
+
+
+if __name__ == "__main__":
+    pass

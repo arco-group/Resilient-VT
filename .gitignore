@@ -1,0 +1,8 @@
+.DS_Store
+*.pyc
+*.err
+*.out
+.idea
+*__pycache__
+/checkpoints
+/CMC_utils/models/tabular/naim/archive
