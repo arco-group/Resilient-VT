@@ -1,6 +1,6 @@
 # Resilient VT
 
-[![arXiv](https://img.shields.io/badge/arXiv-<ARXIV_ID>-b31b1b.svg)](https://arxiv.org/abs/<ARXIV_ID>)
+[![arXiv](https://img.shields.io/badge/arXiv-2605.12031-b31b1b.svg)](https://arxiv.org/abs/2605.12031)
 
 
 This repository contains the PyTorch/Hydra implementation used for the experiments in **"Resilient Vision-Tabular Multimodal Learning under Modality Missingness"**. 
@@ -437,8 +437,8 @@ If you use this code, please cite the associated paper once available:
 ```bibtex
 @article{caruso2026resilient,
   title={Resilient Vision-Tabular Multimodal Learning under Modality Missingness},
-  author={Caruso, Camillo Maria and Soda, Paolo and Guarrasi, Valerio},
-  journal={arXiv preprint arXiv:},
+  author={Caruso, Camillo Maria and Guarrasi, Valerio and Soda, Paolo},
+  journal={arXiv preprint arXiv:2605.12031},
   year={2026}
 } 
 
